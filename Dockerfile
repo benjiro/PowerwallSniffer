@@ -1,15 +1,20 @@
-FROM mcr.microsoft.com/dotnet/core/sdk:2.2 AS build
+﻿FROM mcr.microsoft.com/dotnet/aspnet:5.0 AS base
 WORKDIR /app
+EXPOSE 80
+EXPOSE 443
 
-COPY *.sln .
-COPY PowerwallSniffer/*.csproj ./PowerwallSniffer/
-RUN dotnet restore
+FROM mcr.microsoft.com/dotnet/sdk:5.0 AS build
+WORKDIR /src
+COPY ["src/PowerwallSniffer.csproj", "src/"]
+RUN dotnet restore "src/PowerwallSniffer.csproj"
+COPY . .
+WORKDIR "/src/src"
+RUN dotnet build "PowerwallSniffer.csproj" -c Release -o /app/build
 
-COPY PowerwallSniffer/. ./PowerwallSniffer/
-WORKDIR /app/PowerwallSniffer
-RUN dotnet publish -c Release -o out
+FROM build AS publish
+RUN dotnet publish "PowerwallSniffer.csproj" -c Release -o /app/publish
 
-FROM mcr.microsoft.com/dotnet/core/runtime:2.2 AS runtime
+FROM base AS final
 WORKDIR /app
-COPY --from=build /app/PowerwallSniffer/out ./
+COPY --from=publish /app/publish .
 ENTRYPOINT ["dotnet", "PowerwallSniffer.dll"]

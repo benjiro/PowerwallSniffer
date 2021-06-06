@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace PowerwallSniffer
 {
     using System;
@@ -13,18 +15,23 @@ namespace PowerwallSniffer
     {
         private readonly ILogger<PowerwallService> _logger;
         private readonly PowerwallClient _powerwallClient;
+        private readonly AppConfig _appConfig;
         
         private readonly SolarRepository _solarRepository;
         private readonly SiteRepository _siteRepository;
         private readonly LoadRepository _loadRepository;
         private readonly BatteryRepository _batteryRepository;
+        private readonly CreateDatabase _createDatabase;
         
         private Task _task;
         
         public PowerwallService(ILogger<PowerwallService> logger, PowerwallClient powerwallClient, AppConfig appConfig)
         {
-            _logger = logger;
-            _powerwallClient = powerwallClient;
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));;
+            _powerwallClient = powerwallClient ?? throw new ArgumentNullException(nameof(powerwallClient));;
+            _appConfig = appConfig ?? throw new ArgumentNullException(nameof(appConfig));
+            
+            _createDatabase = new CreateDatabase(appConfig.DatabaseConnectionString);
             _solarRepository = new SolarRepository(appConfig.DatabaseConnectionString);
             _siteRepository = new SiteRepository(appConfig.DatabaseConnectionString);
             _loadRepository = new LoadRepository(appConfig.DatabaseConnectionString);
@@ -33,30 +40,34 @@ namespace PowerwallSniffer
 
         private async Task GetLatestData(CancellationToken cancellationToken)
         {
+            await _createDatabase.Create();
+            
             while (!cancellationToken.IsCancellationRequested)
             {
                 await Task.Run(async () =>
                     {
                         _logger.LogDebug($"Logging Data Started @ {DateTime.Now:h:mm:ss.fff tt zz}");
+
+                        await _powerwallClient.Authenticate(_appConfig.Email, _appConfig.Password);
                         
                         // Read aggregates data from gateway
                         var response = await _powerwallClient.GetAggregates();
                         var responseSoe = await _powerwallClient.GetSystemStatusState();
-                        var data = await response.Content.ReadAsStringAsync();
-                        var batteryData = await responseSoe.Content.ReadAsStringAsync();
+                        var data = await response.Content.ReadAsStringAsync(cancellationToken);
+                        var batteryData = await responseSoe.Content.ReadAsStringAsync(cancellationToken);
                         
-                        var aggregatesData = JsonSerializer.Parse<AggregateModel>(data);
+                        var aggregatesData = JsonSerializer.Deserialize<AggregateModel>(data);
                         // The battery percentage information is from a separate service
                         // Read it and set it on battery model
-                        var batteryObj = JsonSerializer.Parse<PercentageModel>(batteryData);
+                        var batteryObj = JsonSerializer.Deserialize<PercentageModel>(batteryData);
                         aggregatesData.Battery.Percentage = batteryObj.Percentage;
                         
                         // Insert data into DB
                         // TODO abstract this to support multiple providers, restructure to use same connection
-                        _solarRepository.Insert(aggregatesData.Solar);
-                        _siteRepository.Insert(aggregatesData.Site);
-                        _loadRepository.Insert(aggregatesData.Load);
-                        _batteryRepository.Insert(aggregatesData.Battery);
+                        await _solarRepository.Insert(aggregatesData.Solar);
+                        await _siteRepository.Insert(aggregatesData.Site);
+                        await _loadRepository.Insert(aggregatesData.Load);
+                        await _batteryRepository.Insert(aggregatesData.Battery);
                         
                         _logger.LogDebug($"Logging Data Finished @ {DateTime.Now:h:mm:ss.fff tt zz}");
                     },

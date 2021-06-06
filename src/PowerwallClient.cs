@@ -1,3 +1,9 @@
+using System.Net.Http.Headers;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using PowerwallSniffer.Model;
+
 namespace PowerwallSniffer
 {
     using System.Net.Http;
@@ -6,10 +12,24 @@ namespace PowerwallSniffer
     public class PowerwallClient
     {
         private HttpClient HttpClient { get; }
-        
+
         public PowerwallClient(HttpClient httpClient)
         {
             HttpClient = httpClient;
+        }
+
+        public async Task Authenticate(string email, string password)
+        {
+            var request = new TokenRequest
+            {
+                Email = email,
+                Password = password,
+                Username = "customer",
+                ForceSmOff = false
+            };
+            var payload = new StringContent(JsonSerializer.Serialize(request), Encoding.UTF8);
+            var response = await HttpClient.PostAsync("/api/login/Basic", payload).ConfigureAwait(false);
+            response.EnsureSuccessStatusCode();
         }
 
         public async Task<HttpResponseMessage> GetAggregates()
